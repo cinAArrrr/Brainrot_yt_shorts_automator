@@ -177,6 +177,7 @@ class CookieUploader:
 
             print("  Waiting for upload to process...")
             self._wait_upload_ready(driver)
+            time.sleep(2)  # Give upload time to complete and show publish button
 
             print("  Filling in title and description...")
             if not self._focus_first_input(driver):
