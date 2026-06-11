@@ -153,33 +153,23 @@ class CookieUploader:
                 driver.refresh()
                 time.sleep(4)
 
-            # Try direct upload button first (YouTube Studio quick actions),
-            # then fall back to Create -> Upload videos flow.
-            direct_upload = self._try_click(driver, [
-                '#upload-icon',
-                '[aria-label="Videos hochladen"]',
-                '[aria-label="Upload videos"]',
-                '[test-id="upload-icon-url"]',
-                'ytcp-icon-button#upload-icon',
-            ], "Upload icon")
-            if not direct_upload:
-                self._click_first(driver, [
-                    'ytcp-button#create-icon',
-                    '[aria-label="Create"]', '[aria-label="CREATE"]',
-                    '[aria-label="Erstellen"]',
-                    'ytcp-icon-button#create-icon',
-                    '#create-icon', 'ytcp-button#create-button',
-                ], "CREATE")
-                time.sleep(2)
+            self._click_first(driver, [
+                'ytcp-button#create-icon',
+                '[aria-label="Create"]', '[aria-label="CREATE"]',
+                '[aria-label="Erstellen"]',
+                'ytcp-icon-button#create-icon',
+                '#create-icon', 'ytcp-button#create-button',
+            ], "CREATE")
+            time.sleep(2)
 
-                self._click_first(driver, [
-                    'tp-yt-paper-item#text-item-0',
-                    '#text-item-0',
-                    '[aria-label="Upload videos"]',
-                    '[aria-label="Videos hochladen"]',
-                    'ytcp-ve[aria-label="Upload videos"]',
-                    '.ytcp-menu-item',
-                ], "Upload videos")
+            self._click_first(driver, [
+                'tp-yt-paper-item#text-item-0',
+                '#text-item-0',
+                '[aria-label="Upload videos"]',
+                '[aria-label="Videos hochladen"]',
+                'ytcp-ve[aria-label="Upload videos"]',
+                '.ytcp-menu-item',
+            ], "Upload videos")
             time.sleep(2)
 
             print("  Selecting video file...")
@@ -257,19 +247,6 @@ class CookieUploader:
                 pass
 
     # ── UI interaction: click ───────────────────────────────────────────────
-
-    def _try_click(self, driver, selectors, label="button"):
-        """Try to click an element; return True if successful, False if not found."""
-        from selenium.webdriver.common.by import By
-        for sel in selectors:
-            try:
-                el = driver.find_element(By.CSS_SELECTOR, sel)
-                driver.execute_script("arguments[0].click()", el)
-                log.info(f"Clicked {label}: {sel}")
-                return True
-            except Exception:
-                continue
-        return False
 
     def _click_first(self, driver, selectors, label="button"):
         from selenium.webdriver.common.by import By
