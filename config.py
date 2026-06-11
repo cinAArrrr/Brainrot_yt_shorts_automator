@@ -49,7 +49,7 @@ class Config:
         if cls.CONFIG_PATH.exists():
             with open(cls.CONFIG_PATH) as f:
                 return json.load(f)
-        return {"ANTHROPIC_API_KEY": "", "KLING_API_KEY": "", "HF_API_KEY": ""}
+        return {"ANTHROPIC_API_KEY": "", "HF_API_KEY": ""}
 
     @classmethod
     def save(cls, cfg: dict):

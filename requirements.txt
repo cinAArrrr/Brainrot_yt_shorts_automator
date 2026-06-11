@@ -9,15 +9,12 @@ edge-tts>=6.1.9
 # Single-voice TTS fallback
 gTTS>=2.5.1
 
-# Kling AI JWT authentication (only needed if your key is AccessKeyId:AccessKeySecret format)
-PyJWT>=2.8.0
-
 # Video rendering
 moviepy==1.0.3
 Pillow>=10.3.0
 numpy>=1.24.0
 
-# HTTP (Kling API + Pollinations.ai fallback + cookie verification)
+# HTTP (cookie verification + Hugging Face inference)
 requests>=2.31.0
 
 # Browser automation for YouTube upload

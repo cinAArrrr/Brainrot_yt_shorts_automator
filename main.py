@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 BANNER = """
 ====================================================
    Court Chronicles Bot -- YouTube Shorts Auto-Poster
-    Groq + Kling AI + Edge TTS Edition
+    Groq + Edge TTS Edition
 ===================================================="""
 
 
@@ -41,7 +41,6 @@ def _build_generator() -> BrainrotGenerator:
         sys.exit(1)
     return BrainrotGenerator(
         anthropic_api_key=cfg["ANTHROPIC_API_KEY"],
-        kling_api_key=cfg.get("KLING_API_KEY", ""),
         hf_api_key=cfg.get("HF_API_KEY", ""),
     )
 
@@ -111,7 +110,6 @@ def cmd_start(args):
     BrainrotScheduler(
         uploader=uploader,
         anthropic_api_key=Config.load()["ANTHROPIC_API_KEY"],
-        kling_api_key=Config.load().get("KLING_API_KEY", ""),
         hf_api_key=Config.load().get("HF_API_KEY", ""),
         interval_minutes=interval,
         topic=args.topic or None,
@@ -132,15 +130,6 @@ def cmd_config(args):
         changed = True
         print("Hugging Face API key saved.")
 
-    if args.kling_key:
-        cfg["KLING_API_KEY"] = args.kling_key
-        changed = True
-        print("Kling AI key saved.")
-        if ":" in args.kling_key:
-            print("  Format detected: AccessKeyId:AccessKeySecret -- JWT will be generated automatically.")
-        else:
-            print("  Format detected: simple Bearer token.")
-
     if changed:
         Config.save(cfg)
     else:
@@ -151,8 +140,6 @@ def cmd_config(args):
         print("\nCommands:")
         print("  python main.py config --groq-key  gsk_YOUR_GROQ_KEY")
         print("  python main.py config --hf-key    hf_YOUR_HUGGINGFACE_KEY")
-        print("  python main.py config --kling-key YOUR_KLING_KEY")
-        print("  python main.py config --kling-key AccessKeyId:AccessKeySecret")
 
 
 def main():
@@ -178,7 +165,6 @@ def main():
 
     p = sub.add_parser("config", help="View or set config")
     p.add_argument("--groq-key",  dest="groq_key")
-    p.add_argument("--kling-key", dest="kling_key")
     p.add_argument("--hf-key",    dest="hf_key")
     # legacy alias
     p.add_argument("--anthropic-key", dest="groq_key")

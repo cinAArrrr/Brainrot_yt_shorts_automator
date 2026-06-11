@@ -46,7 +46,6 @@ python main.py start
 
 - **Groq** (required): https://console.groq.com — free tier: 30 req/min, 14k req/day
 - **Hugging Face** (optional): https://huggingface.co/settings/tokens — free AI video backgrounds
-- **Kling** (optional): https://klingai.com — paid AI video backgrounds
 
 ## YouTube login (one-time)
 

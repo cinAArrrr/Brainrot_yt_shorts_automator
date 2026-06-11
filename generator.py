@@ -5,8 +5,7 @@ Pipeline:
   1. Groq (free)          -> multi-character dialogue script
   2. edge-tts (free)      -> per-character voices concatenated into one audio file
   3. Hugging Face (free)  -> text-to-video courtroom clip (via Inference API)
-     Kling AI (paid)      -> fallback
-     Procedural drawing   -> last resort fallback
+     Procedural drawing   -> fallback
   4. PIL + moviepy        -> three-zone 9:16 Short with animated character avatars
 """
 
@@ -39,11 +38,7 @@ HF_VIDEO_MODELS = [
 HF_INFERENCE_URL = "https://api-inference.huggingface.co/models"
 HF_POLL_TIMEOUT  = 120
 
-# ── Kling AI config (paid fallback) ───────────────────────────────────────────
-KLING_API_BASE     = "https://api.klingai.com"
-KLING_TEXT2VIDEO   = f"{KLING_API_BASE}/v1/videos/text2video"
-KLING_POLL_TIMEOUT = 600
-KLING_POLL_INTERVAL = 10
+
 
 # ── Font discovery (Windows-first) ─────────────────────────────────────────────
 IMPACT_FONT_CANDIDATES = [
@@ -112,11 +107,9 @@ CHARACTER_LABELS = {
 
 class BrainrotGenerator:
 
-    def __init__(self, anthropic_api_key: str, kling_api_key: str = "",
-                 hf_api_key: str = ""):
-        self.client        = OpenAI(api_key=anthropic_api_key, base_url=GROQ_BASE_URL)
-        self.kling_api_key = kling_api_key.strip()
-        self.hf_api_key    = hf_api_key.strip()
+    def __init__(self, anthropic_api_key: str, hf_api_key: str = ""):
+        self.client     = OpenAI(api_key=anthropic_api_key, base_url=GROQ_BASE_URL)
+        self.hf_api_key = hf_api_key.strip()
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -303,41 +296,6 @@ class BrainrotGenerator:
             except Exception: pass
         return timed
 
-    # ── Kling AI video generation ──────────────────────────────────────────────
-
-    def _kling_auth_header(self) -> str:
-        """
-        Build the Authorization header for Kling AI.
-
-        Kling's official API (api.klingai.com) uses JWT authentication:
-        you sign a payload with your AccessKeySecret (HS256) and send the
-        resulting token as a Bearer token.
-
-        Supported key formats:
-          "AccessKeyId:AccessKeySecret"  ->  generates a JWT automatically
-          "any_other_string"             ->  used directly as Bearer token
-                                             (works with some reseller APIs)
-        """
-        key = self.kling_api_key
-        if not key:
-            return ""
-
-        if ":" in key:
-            key_id, key_secret = key.split(":", 1)
-            try:
-                import jwt as _jwt   # pip install PyJWT
-                now   = int(time.time())
-                token = _jwt.encode(
-                    {"iss": key_id, "exp": now + 1800, "nbf": now - 5},
-                    key_secret, algorithm="HS256"
-                )
-                return f"Bearer {token}"
-            except ImportError:
-                log.warning("PyJWT not installed — using key_id directly. "
-                            "Run: pip install PyJWT")
-                return f"Bearer {key_id}"
-        return f"Bearer {key}"
-
     def _generate_courtroom_video_hf(self) -> Optional[str]:
         if not self.hf_api_key:
             return None
@@ -388,68 +346,6 @@ class BrainrotGenerator:
                     break
             print()
 
-        return None
-
-    def _generate_courtroom_video_kling(self, width: int, height: int) -> Optional[str]:
-        if not self.kling_api_key:
-            return None
-        import requests as _req
-        PROMPT = (
-            "Photorealistic American courtroom interior, wide establishing shot. "
-            "Judge seated at elevated wooden bench, defence and prosecution "
-            "attorneys at tables, spectators in gallery seats, wooden panelling, "
-            "dramatic side lighting, 4K cinematic, steady camera, no motion blur."
-        )
-        headers = {
-            "Authorization": self._kling_auth_header(),
-            "Content-Type":  "application/json",
-        }
-        payload = {
-            "model": "kling-v1", "prompt": PROMPT,
-            "negative_prompt": "blurry, cartoon, animation, text, watermark, people walking",
-            "cfg_scale": 0.5, "mode": "std", "aspect_ratio": "16:9", "duration": "5",
-        }
-        log.info("Requesting Kling AI courtroom video...")
-        print("  Requesting Kling AI video...")
-        try:
-            r = _req.post(KLING_TEXT2VIDEO, headers=headers, json=payload, timeout=30)
-            r.raise_for_status()
-            resp_data = r.json()
-            if resp_data.get("code", 0) != 0:
-                log.error(f"Kling API error: {resp_data.get('message')}")
-                return None
-            task_id = resp_data["data"]["task_id"]
-        except Exception as e:
-            log.error(f"Kling video request failed: {e}")
-            return None
-        poll_url = f"{KLING_TEXT2VIDEO}/{task_id}"
-        deadline = time.time() + KLING_POLL_TIMEOUT
-        attempt = 0
-        while time.time() < deadline:
-            time.sleep(KLING_POLL_INTERVAL); attempt += 1
-            try:
-                pr = _req.get(poll_url, headers=headers, timeout=20)
-                pr.raise_for_status()
-                pd = pr.json().get("data", {})
-                status = pd.get("task_status", "")
-                if status == "succeed":
-                    video_url = pd["task_result"]["videos"][0]["url"]
-                    log.info(f"Kling render complete")
-                    print(f"  Kling render done! Downloading video...")
-                    vr = _req.get(video_url, timeout=180)
-                    vr.raise_for_status()
-                    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-                        f.write(vr.content)
-                    return f.name
-                elif status == "failed":
-                    log.error(f"Kling render failed: {pd}")
-                    return None
-                else:
-                    pct = pd.get("task_status_msg", status)
-                    print(f"  Kling rendering... {pct}", end="\r", flush=True)
-            except Exception as e:
-                log.warning(f"Kling poll error (will retry): {e}")
-        log.error("Kling AI timed out")
         return None
 
     def _generate_courtroom_image(self, width: int, height: int) -> Image.Image:
@@ -701,26 +597,20 @@ class BrainrotGenerator:
                 if seg["start"] <= t < seg["end"]: return seg["character"]
             return "NARRATOR"
 
-        # ── Background: HF video (free) -> Kling (paid) -> procedural drawing ─
+        # ── Background: HF video (free) -> procedural drawing ─────────────────
+        bg_clip      = None
+        courtroom_bg = None
         hf_path      = self._generate_courtroom_video_hf()
         use_video    = hf_path is not None
-        kling_clip   = None
-        courtroom_bg = None
-
-        if not use_video:
-            kling_path = self._generate_courtroom_video_kling(W, MID_H)
-            use_video  = kling_path is not None
-            if use_video:
-                hf_path = kling_path
 
         if use_video:
-            log.info("Using AI video as courtroom background")
-            kling_clip  = VideoFileClip(hf_path).resize(width=W)
-            kh = kling_clip.size[1]
+            log.info("Using Hugging Face video as courtroom background")
+            bg_clip  = VideoFileClip(hf_path).resize(width=W)
+            kh = bg_clip.size[1]
             if kh > MID_H:
                 y1 = (kh - MID_H) // 2
-                kling_clip = kling_clip.crop(y1=y1, y2=y1+MID_H)
-            first_arr    = kling_clip.get_frame(0).astype(np.uint8)
+                bg_clip = bg_clip.crop(y1=y1, y2=y1+MID_H)
+            first_arr    = bg_clip.get_frame(0).astype(np.uint8)
             first_pil    = Image.fromarray(first_arr).resize((W, MID_H), Image.LANCZOS)
         else:
             log.info("No video API — using procedural drawing")
@@ -770,8 +660,8 @@ class BrainrotGenerator:
             # Middle strip — video frame OR Ken Burns on static image
             mid_y = d1y + DIV
             if use_video:
-                frame_t    = t % kling_clip.duration
-                mid_arr    = kling_clip.get_frame(frame_t).astype(np.uint8)
+                frame_t    = t % bg_clip.duration
+                mid_arr    = bg_clip.get_frame(frame_t).astype(np.uint8)
                 mid_frame  = Image.fromarray(mid_arr)
                 if mid_frame.size != (W, MID_H):
                     mid_frame = mid_frame.resize((W, MID_H), Image.LANCZOS)
@@ -822,7 +712,7 @@ class BrainrotGenerator:
         composite_audio, ambient = self._compose_audio(
             voice_audio.subclip(0, duration), duration)
         clip = clip.set_audio(composite_audio)
-        return clip, voice_audio, ambient, kling_clip, FPS
+        return clip, voice_audio, ambient, bg_clip, FPS
 
     def render_video(self, script, audio_path, output_path,
                      banner_title="WILD COURTROOM MOMENT",
@@ -831,13 +721,13 @@ class BrainrotGenerator:
         Path(output_path).resolve().parent.mkdir(parents=True, exist_ok=True)
         objs = []
         try:
-            clip, voice, ambient, kling_clip, FPS = self._build_video_clip(
+            clip, voice, ambient, bg_clip, FPS = self._build_video_clip(
                 script, audio_path,
                 banner_title=banner_title,
                 watermark_text=watermark_text,
                 dialogue_segments=dialogue_segments,
             )
-            objs = [clip, voice, ambient, kling_clip]
+            objs = [clip, voice, ambient, bg_clip]
             log.info("Rendering video...")
             clip.write_videofile(
                 output_path, fps=FPS,
@@ -879,7 +769,7 @@ class BrainrotGenerator:
                 timed = []
 
             from config import Config
-            print("Rendering video (may take 3-8 minutes with Kling)...")
+            print("Rendering video...")
             self.render_video(
                 script, audio_path, output_path,
                 banner_title=banner_title,
