@@ -41,10 +41,11 @@ class BrainrotScheduler:
             hf_api_key=self.hf_key,
         )
 
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-            video_path = f.name
-
+        video_path = None
         try:
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+                video_path = f.name
+
             video_path, meta = gen.create_video(
                 topic=self.topic,
                 output_path=video_path,
@@ -69,8 +70,11 @@ class BrainrotScheduler:
             log.debug(traceback.format_exc())
             print(f"  ERROR: {e}")
         finally:
-            try: os.remove(video_path)
-            except Exception: pass
+            if video_path and os.path.exists(video_path):
+                try:
+                    os.remove(video_path)
+                except Exception:
+                    pass
 
     def run(self):
         print("Starting -- first video generating now...\n")

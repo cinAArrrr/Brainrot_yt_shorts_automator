@@ -3,6 +3,7 @@ config.py -- Configuration & constants for Court Chronicles Bot
 """
 
 import json
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -10,6 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 class Config:
     CONFIG_PATH   = BASE_DIR / "config.json"
+    CONFIG_PATH_ENC = BASE_DIR / "config.json.enc"
     WATERMARK_TEXT = "Court Chronicles"
     THEME_NAME     = "cinematic_dark"
 
@@ -45,13 +47,60 @@ class Config:
     ]
 
     @classmethod
+    def _normalize(cls, cfg: dict) -> dict:
+        return {
+            "ANTHROPIC_API_KEY": str(cfg.get("ANTHROPIC_API_KEY", cfg.get("GROQ_API_KEY", ""))).strip(),
+            "HF_API_KEY": str(cfg.get("HF_API_KEY", "")).strip(),
+            "WATERMARK_TEXT": str(cfg.get("WATERMARK_TEXT", cls.WATERMARK_TEXT)).strip(),
+            "THEME_NAME": str(cfg.get("THEME_NAME", cls.THEME_NAME)).strip(),
+        }
+
+    @classmethod
     def load(cls) -> dict:
+        if cls.CONFIG_PATH_ENC.exists():
+            try:
+                from secret_store import decrypt_path, get_passphrase
+                pp = get_passphrase("BrainRot passphrase: ")
+                raw = decrypt_path(cls.CONFIG_PATH_ENC, pp)
+                return cls._normalize(json.loads(raw.decode("utf-8")))
+            except Exception as e:
+                print(f"WARNING: could not decrypt {cls.CONFIG_PATH_ENC}: {e}")
+
         if cls.CONFIG_PATH.exists():
             with open(cls.CONFIG_PATH) as f:
-                return json.load(f)
-        return {"ANTHROPIC_API_KEY": "", "HF_API_KEY": ""}
+                return cls._normalize(json.load(f))
+
+        return cls._normalize({
+            "ANTHROPIC_API_KEY": os.getenv("GROQ_API_KEY", ""),
+            "HF_API_KEY": "",
+        })
 
     @classmethod
     def save(cls, cfg: dict):
+        payload = cls._normalize(cfg)
+
+        if cls.CONFIG_PATH_ENC.exists():
+            try:
+                from secret_store import encrypt_path, get_passphrase
+                pp = get_passphrase("BrainRot passphrase: ")
+                tmp = cls.CONFIG_PATH.with_suffix(".json.tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                try:
+                    encrypt_path(tmp, cls.CONFIG_PATH_ENC, pp)
+                finally:
+                    try:
+                        tmp.unlink()
+                    except Exception:
+                        pass
+                if cls.CONFIG_PATH.exists():
+                    try:
+                        cls.CONFIG_PATH.unlink()
+                    except Exception:
+                        pass
+                return
+            except Exception as e:
+                print(f"WARNING: could not write encrypted config ({e}); falling back to plaintext.")
+
         with open(cls.CONFIG_PATH, "w") as f:
-            json.dump(cfg, f, indent=2)
+            json.dump(payload, f, indent=2)

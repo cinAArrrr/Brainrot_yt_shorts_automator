@@ -1,6 +1,8 @@
 # Secrets
 cookies.txt
+cookies.txt.enc
 config.json
+config.json.enc
 *.log
 
 # Python cache

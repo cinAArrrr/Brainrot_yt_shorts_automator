@@ -26,6 +26,23 @@ from openai import OpenAI
 
 log = logging.getLogger(__name__)
 
+def _groq_call(client, **kwargs):
+    kwargs.setdefault("model", GROQ_MODEL)
+    for attempt in range(3):
+        try:
+            resp = client.chat.completions.create(**kwargs)
+            text = resp.choices[0].message.content.strip()
+            if text:
+                return text
+        except Exception as e:
+            if attempt < 2:
+                wait = 2 ** attempt
+                log.warning(f"Groq call failed (attempt {attempt+1}/3): {e}, retrying in {wait}s")
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError("Groq returned empty response after 3 attempts")
+
 # ── Groq config ────────────────────────────────────────────────────────────────
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_MODEL    = "llama-3.3-70b-versatile"
@@ -37,8 +54,6 @@ HF_VIDEO_MODELS = [
 ]
 HF_INFERENCE_URL = "https://api-inference.huggingface.co/models"
 HF_POLL_TIMEOUT  = 120
-
-
 
 # ── Font discovery (Windows-first) ─────────────────────────────────────────────
 IMPACT_FONT_CANDIDATES = [
@@ -113,13 +128,6 @@ class BrainrotGenerator:
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _extract_text(resp) -> str:
-        try:
-            return resp.choices[0].message.content.strip()
-        except Exception:
-            return ""
-
     def _font(self, size: int) -> ImageFont.FreeTypeFont:
         for p in [IMPACT_FONT_PATH, BOLD_FONT_PATH]:
             if p:
@@ -165,23 +173,21 @@ class BrainrotGenerator:
         if not topic:
             topic = random.choice(Config.TOPIC_POOL)
         log.info(f"Generating dialogue script: {topic}")
-        resp = self.client.chat.completions.create(
-            model=GROQ_MODEL, max_tokens=500,
-            messages=[{"role": "user", "content": (
-                "Write a short dramatic, slightly comedic courtroom video script.\n\n"
-                f"Topic: {topic}\n\n"
-                "Format as [CHARACTER] dialogue. Characters: NARRATOR, JUDGE, LAWYER, KAREN, DEFENSE, WITNESS\n"
-                "Rules:\n"
-                "- NARRATOR sets the scene (1-2 punchy lines)\n"
-                "- 5-8 exchanges, each MAX 12 words\n"
-                "- KAREN is the clueless defendant\n"
-                "- JUDGE has the final word, done with everyone\n"
-                "- Dramatic but funny\n"
-                "- NO hashtags, NO emojis\n\n"
-                "Return ONLY the formatted dialogue."
-            )}]
-        )
-        script = self._extract_text(resp)
+        script = _groq_call(self.client, max_tokens=500, messages=[{"role": "user", "content": (
+            "Write a short dramatic, slightly comedic courtroom video script.\n\n"
+            f"Topic: {topic}\n\n"
+            'Use EXACT format: [CHARACTER] dialogue. '
+            'Example:\n[JUDGE] Order in my court.\n[LAWYER] Objection!\n\n'
+            "Characters: NARRATOR, JUDGE, LAWYER, KAREN, DEFENSE, WITNESS\n"
+            "Rules:\n"
+            "- NARRATOR sets the scene (1-2 punchy lines)\n"
+            "- 5-8 exchanges, each MAX 12 words\n"
+            "- KAREN is the clueless defendant\n"
+            "- JUDGE has the final word, done with everyone\n"
+            "- Dramatic but funny\n"
+            "- NO hashtags, NO emojis\n\n"
+            "Return ONLY the formatted dialogue."
+        )}])
         if not script: raise RuntimeError("Empty script")
         log.info(f"Script: {len(script.splitlines())} lines")
         return script
@@ -192,7 +198,7 @@ class BrainrotGenerator:
         for line in script.splitlines():
             line = line.strip()
             if not line: continue
-            m = re.match(r"\[(\w+)\]\s*:?\s*(.*)", line)
+            m = re.match(r"\[?(\w+)\]?\s*:?\s*(.*)", line)
             if m:
                 char, text = m.group(1).upper(), m.group(2).strip()
                 if text: segs.append({"character": char, "text": text})
@@ -201,28 +207,21 @@ class BrainrotGenerator:
         return segs
 
     def generate_metadata(self, script: str, topic: str = "") -> dict:
-        resp = self.client.chat.completions.create(
-            model=GROQ_MODEL, max_tokens=250,
-            messages=[{"role": "user", "content": (
-                f"Based on this courtroom script, generate a viral YouTube title and 10 tags.\n\nScript: {script}\n\n"
-                'Return ONLY valid JSON:\n{"title":"Dramatic title #Shorts","tags":["court","judge","lawyer","trial","crime","viral","shorts","fyp","truecrime","wild"]}'
-            )}]
-        )
-        raw = self._extract_text(resp)
+        raw = _groq_call(self.client, max_tokens=250, messages=[{"role": "user", "content": (
+            f"Based on this courtroom script, generate a viral YouTube title and 10 tags.\n\nScript: {script}\n\n"
+            'Return ONLY valid JSON:\n{"title":"Dramatic title #Shorts","tags":["court","judge","lawyer","trial","crime","viral","shorts","fyp","truecrime","wild"]}'
+        )}])
         if "```" in raw: raw = raw.split("```")[1].replace("json","").strip()
         try: return __import__("json").loads(raw)
         except Exception: return {"title": f"Wild Court Moment #Shorts", "tags": ["court","shorts","viral"]}
 
     def generate_banner_title(self, script: str, topic: str = "") -> str:
-        resp = self.client.chat.completions.create(
-            model=GROQ_MODEL, max_tokens=60,
-            messages=[{"role": "user", "content": (
-                f"Based on this courtroom script, write a SHORT hook title for a YouTube Short.\n"
-                f"Max 6 words. ALL CAPS. No hashtags. No punctuation except exclamation mark.\n"
-                f"Script: {script}\nReturn ONLY the title."
-            )}]
-        )
-        return self._extract_text(resp).upper()[:60] or "WILD COURTROOM MOMENT"
+        text = _groq_call(self.client, max_tokens=60, messages=[{"role": "user", "content": (
+            f"Based on this courtroom script, write a SHORT hook title for a YouTube Short.\n"
+            f"Max 6 words. ALL CAPS. No hashtags. No punctuation except exclamation mark.\n"
+            f"Script: {script}\nReturn ONLY the title."
+        )}])
+        return text.upper()[:60] or "WILD COURTROOM MOMENT"
 
     # ── Multi-voice TTS ────────────────────────────────────────────────────────
 
@@ -453,14 +452,13 @@ class BrainrotGenerator:
             wy = int(hh*10)
             for ly in range(wy+int(hh*3), wy+win_h-int(hh*3), int(hh*4)):
                 for i in range(3):
-                    alpha = 0.08 - 0.03 * abs(i - 1)
-                    rng = lambda v: (v - 5 + int(10*alpha))
+                    c = (100 - i*20, 80 - i*10, 40)
                     draw.line([(wx+int(wh*2)+i*int(wh*3), ly),
                                (wx+int(wh*2)+i*int(wh*3)+int(wh*2), ly+int(hh*2))],
-                              fill=(100, 80, 40, int(30*alpha)))
+                              fill=c)
                     draw.line([(wx+int(wh*2)+i*int(wh*3)+int(wh*2), ly),
                                (wx+int(wh*2)+i*int(wh*3), ly+int(hh*2))],
-                              fill=(80, 70, 40, int(25*alpha)))
+                              fill=(c[0]-20, c[1]-10, c[2]))
         return img
 
     # ── Ken Burns zoom (for static image fallback) ─────────────────────────────
@@ -712,7 +710,7 @@ class BrainrotGenerator:
         composite_audio, ambient = self._compose_audio(
             voice_audio.subclip(0, duration), duration)
         clip = clip.set_audio(composite_audio)
-        return clip, voice_audio, ambient, bg_clip, FPS
+        return clip, voice_audio, ambient, bg_clip, FPS, hf_path
 
     def render_video(self, script, audio_path, output_path,
                      banner_title="WILD COURTROOM MOMENT",
@@ -720,8 +718,9 @@ class BrainrotGenerator:
                      dialogue_segments=None) -> str:
         Path(output_path).resolve().parent.mkdir(parents=True, exist_ok=True)
         objs = []
+        hf_video_path = None
         try:
-            clip, voice, ambient, bg_clip, FPS = self._build_video_clip(
+            clip, voice, ambient, bg_clip, FPS, hf_video_path = self._build_video_clip(
                 script, audio_path,
                 banner_title=banner_title,
                 watermark_text=watermark_text,
@@ -741,8 +740,15 @@ class BrainrotGenerator:
         finally:
             for o in objs:
                 try:
-                    if o: o.close()
-                except Exception: pass
+                    if o is not None:
+                        o.close()
+                except Exception:
+                    pass
+            if hf_video_path and os.path.exists(hf_video_path):
+                try:
+                    os.remove(hf_video_path)
+                except Exception:
+                    pass
 
     def create_video(self, topic=None,
                      output_path="brainrot_output.mp4") -> Tuple[str, dict]:
@@ -779,6 +785,8 @@ class BrainrotGenerator:
             meta["script"] = plain
             return output_path, meta
         finally:
-            if audio_path:
-                try: os.remove(audio_path)
-                except Exception: pass
+            if audio_path and os.path.exists(audio_path):
+                try:
+                    os.remove(audio_path)
+                except Exception:
+                    pass

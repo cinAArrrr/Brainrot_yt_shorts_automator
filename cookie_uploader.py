@@ -1,30 +1,52 @@
-"""
-cookie_uploader.py -- Upload videos to YouTube Shorts via Selenium + cookie auth.
-
-Uses YouTube Studio's upload page with a headless Chrome browser
-authenticated via session cookies from cookie_auth.
-"""
-
 import os
+import re
 import time
 import logging
+import tempfile
+import subprocess
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# YouTube Studio upload URL
-STUDIO_UPLOAD_URL = "https://studio.youtube.com/upload"
 YOUTUBE_URL = "https://www.youtube.com"
+STUDIO_URL = "https://studio.youtube.com"
+
+_FINDER_JS = """
+function findEl(root, sel, depth) {
+    if (depth <= 0) return null;
+    try { var e = root.querySelector(sel); if (e) return e; } catch(e) {}
+    var all = root.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+        if (all[i].shadowRoot) {
+            var f = findEl(all[i].shadowRoot, sel, depth - 1);
+            if (f) return f;
+        }
+    }
+    return null;
+}
+function findInput(root, depth) {
+    if (depth <= 0) return null;
+    var sel = 'textarea, input:not([type="hidden"]):not([type="file"]):not([type="radio"]):not([type="checkbox"]), [contenteditable="true"], [role="textbox"]';
+    var e = root.querySelector(sel);
+    if (e) return e;
+    var all = root.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+        if (all[i].shadowRoot) {
+            var f = findInput(all[i].shadowRoot, depth - 1);
+            if (f) return f;
+        }
+    }
+    return null;
+}
+"""
 
 
 class CookieUploader:
 
-    def __init__(self, auth):
-        """
-        auth: a CookieAuth instance that has already been loaded.
-        """
+    def __init__(self, auth, headless=False):
         self.auth = auth
-        self._driver = None
+        self.driver = None
+        self.headless = headless
 
     def _make_driver(self, headless=True):
         from selenium import webdriver
@@ -37,7 +59,7 @@ class CookieUploader:
         opts.add_argument("--disable-gpu")
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--window-size=1280,1080")
+        opts.add_argument("--window-size=1280,720")
         opts.add_argument("--log-level=3")
         opts.add_argument("--disable-blink-features=AutomationControlled")
         opts.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -54,11 +76,9 @@ class CookieUploader:
             service = Service()
 
         driver = webdriver.Chrome(service=service, options=opts)
-
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         })
-
         return driver
 
     def _inject_cookies(self, driver):
@@ -66,19 +86,44 @@ class CookieUploader:
         time.sleep(2)
         for cookie in self.auth.get_selenium_cookies():
             try:
-                driver.execute_cdp_cmd("Network.setCookie", {
-                    "name": cookie["name"],
-                    "value": cookie["value"],
-                    "domain": cookie["domain"],
-                    "path": cookie.get("path", "/"),
-                    "secure": bool(cookie.get("secure")),
-                    "httpOnly": False,
-                    "sameSite": "Lax",
-                })
+                driver.add_cookie(cookie)
             except Exception:
                 pass
         driver.get(YOUTUBE_URL)
         time.sleep(2)
+
+    # ── Driver management ──────────────────────────────────────────────────
+
+    def create_driver(self, headless=None):
+        if self.driver:
+            return self.driver
+        self.driver = self._make_driver(
+            headless if headless is not None else self.headless
+        )
+        return self.driver
+
+    def ensure_logged_in(self):
+        if not self.driver:
+            self.create_driver()
+        self.driver.get(STUDIO_URL)
+        time.sleep(5)
+        if "accounts.google.com" in self.driver.current_url.lower():
+            print("\n=== FIRST TIME LOGIN REQUIRED ===")
+            print("Log into YouTube in the opened Chrome window.")
+            input("Press ENTER after login is complete...")
+            self.driver.get(STUDIO_URL)
+            time.sleep(5)
+        print("Using saved YouTube session.")
+
+    def close(self):
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+            self.driver = None
+
+    # ── Upload ──────────────────────────────────────────────────────────────
 
     def upload(self, video_path: str, title: str, description: str = "",
                tags: list[str] | None = None) -> str | None:
@@ -88,74 +133,78 @@ class CookieUploader:
             return None
 
         log.info(f"Uploading: {video_path}")
-        print(f"  Opening YouTube Studio...")
+        print("  Opening YouTube Studio...")
 
-        driver = self._make_driver(headless=True)
+        if self.driver is None:
+            self.create_driver(headless=False)
+        driver = self.driver
+
         try:
             self._inject_cookies(driver)
-            driver.get(STUDIO_UPLOAD_URL)
+            driver.get(STUDIO_URL)
             time.sleep(5)
 
             if "accounts.google.com" in driver.current_url:
-                print("  ERROR: Session expired. Run 'python main.py login' to refresh cookies.")
+                print("  Session expired. Run 'python main.py login'.")
                 return None
 
-            print(f"  Selecting video file...")
-            self._send_file_to_upload(driver, video_path)
+            if "error" in driver.page_source.lower()[:500]:
+                print("  Error page, refreshing...")
+                driver.refresh()
+                time.sleep(4)
 
-            print(f"  Waiting for upload page to load...")
-            self._wait_for_element(driver, '#title-textarea, #title, input[name="title"], [placeholder*="title"]', timeout=180)
+            self._click_first(driver, [
+                '#create-icon', '[aria-label="Create"]',
+                '[aria-label="CREATE"]', 'ytcp-button#create-button',
+            ], "CREATE")
+            time.sleep(2)
 
-            print(f"  Setting title...")
-            el = driver.find_element("css selector", '#title-textarea, #title, input[name="title"], [placeholder*="title"]')
-            el.clear()
-            el.send_keys(title[:100])
+            self._click_first(driver, [
+                '[aria-label="Upload videos"]',
+                'ytcp-ve[aria-label="Upload videos"]',
+                '.ytcp-menu-item',
+            ], "Upload videos")
+            time.sleep(2)
 
-            print(f"  Setting description...")
-            for sel in ['#description-textarea', '#description', '[contenteditable="true"]', '[placeholder*="description"]']:
-                try:
-                    el = driver.find_element("css selector", sel)
-                    el.click()
-                    time.sleep(0.3)
-                    el.clear()
-                    el.send_keys(description[:5000])
-                    break
-                except Exception:
-                    continue
+            print("  Selecting video file...")
+            self._send_file(driver, video_path)
+
+            print("  Waiting for upload to process...")
+            self._wait_upload_ready(driver)
+
+            print("  Filling in title and description...")
+            if not self._focus_first_input(driver):
+                log.warning("Could not focus title field, typing anyway")
+            time.sleep(1)
+            self._type_human(driver, title[:100], "title")
+            self._press_tab(driver)
+            time.sleep(0.5)
+            self._type_human(driver, description[:5000], "description")
 
             if tags:
-                print(f"  Adding tags...")
+                print("  Adding tags...")
                 self._set_tags(driver, tags)
 
-            print(f"  Setting visibility to Public...")
-            self._set_visibility_public(driver)
+            print("  Publishing...")
+            self._publish(driver)
 
-            print(f"  Clicking Publish...")
-            published = self._click_publish(driver)
-
-            if published:
-                time.sleep(5)
-                video_id = self._extract_video_id(driver)
+            time.sleep(5)
+            video_id = self._extract_video_id(driver)
+            if video_id:
                 log.info(f"Upload complete: {video_id}")
-                return video_id
             else:
-                log.error("Publish button not found or clicked")
-                print("  WARNING: Could not confirm publish. Check YouTube Studio manually.")
-                return None
+                log.warning("Could not extract video ID")
+            return video_id
 
         except Exception as e:
             log.error(f"Upload failed: {e}")
             print(f"  ERROR: {e}")
+            self._save_debug(driver)
             return None
-        finally:
-            try:
-                driver.quit()
-            except Exception:
-                pass
+
+    # ── Login ───────────────────────────────────────────────────────────────
 
     def login_and_save_cookies(self) -> bool:
-        """Open visible Chrome, let user log into YouTube, save cookies to cookies.txt"""
-        from selenium.webdriver.common.by import By
         driver = self._make_driver(headless=False)
         try:
             driver.get("https://www.youtube.com")
@@ -191,176 +240,193 @@ class CookieUploader:
             except Exception:
                 pass
 
-    def _send_file_to_upload(self, driver, video_path):
-        from selenium.webdriver.common.by import By
+    # ── UI interaction: click ───────────────────────────────────────────────
 
-        selectors = [
-            'input[type="file"]',
-            'input[accept*="video"]',
-            '#upload-input',
-            '[data-upload-input] input',
-            '.upload-input input',
-        ]
+    def _click_first(self, driver, selectors, label="button"):
         for sel in selectors:
             try:
-                el = driver.find_element(By.CSS_SELECTOR, sel)
-                el.send_keys(video_path)
-                log.info("File sent via input selector")
+                el = driver.find_element("css selector", sel)
+                driver.execute_script("arguments[0].click()", el)
+                log.info(f"Clicked {label}: {sel}")
                 return
             except Exception:
                 continue
+        driver.execute_script(selectors[0] + "?.click()")
 
+    # ── File selection ──────────────────────────────────────────────────────
+
+    def _send_file(self, driver, video_path):
+        from selenium.webdriver.common.by import By
+        for sel in [
+            'input[type="file"]', 'input[accept*="video"]',
+            '#upload-input', '[data-upload-input] input', '.upload-input input',
+        ]:
+            try:
+                driver.find_element(By.CSS_SELECTOR, sel).send_keys(video_path)
+                log.info("File sent via standard input")
+                return
+            except Exception:
+                continue
         try:
-            driver.execute_script("""
+            host = driver.find_element(By.CSS_SELECTOR, "ytcp-upload-file-selector")
+            inp = driver.execute_script(
+                "return arguments[0].shadowRoot.querySelector('input[type=file]')", host
+            )
+            if inp:
+                inp.send_keys(video_path)
+                log.info("File sent via shadow DOM input")
+                return
+        except Exception:
+            pass
+        try:
+            inp = driver.execute_script("""
                 var inp = document.createElement('input');
-                inp.type = 'file';
-                inp.accept = 'video/*';
+                inp.type = 'file'; inp.accept = 'video/*';
                 inp.style.display = 'none';
                 document.body.appendChild(inp);
-                arguments[0].onclick = function() { inp.click(); };
                 return inp;
             """)
-            log.info("Created hidden file input")
-            inp = driver.execute_script("return document.querySelector('input[type=file]:last-child')")
             inp.send_keys(video_path)
+            log.info("File sent via injected input")
             return
         except Exception:
             pass
+        raise RuntimeError("Could not locate file input")
 
-        log.warning("Could not find file input -- trying JS click on upload area")
-        for script in [
-            "document.querySelector('[aria-label*=\"upload\"]')?.click()",
-            "document.querySelector('.upload-area')?.click()",
-            "document.querySelector('ytcp-upload-file-selector')?.shadowRoot?.querySelector('input')",
-        ]:
-            try:
-                driver.execute_script(script)
-                time.sleep(2)
-                for el in driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]'):
-                    el.send_keys(video_path)
-                    return
-            except Exception:
-                continue
+    # ── Wait for upload ─────────────────────────────────────────────────────
 
-        raise RuntimeError("Could not locate file upload input")
-
-    def _wait_for_element(self, driver, selector: str, timeout: int = 60):
-        from selenium.webdriver.common.by import By
+    def _wait_upload_ready(self, driver, timeout=180):
         deadline = time.time() + timeout
         while time.time() < deadline:
+            ready = driver.execute_script(_FINDER_JS + """
+                var ta = findInput(document, 15);
+                if (!ta) return false;
+                var r = ta.getBoundingClientRect();
+                return r.width > 0 && r.height > 0 && r.top > 0;
+            """)
+            if ready:
+                time.sleep(3)
+                return
+            time.sleep(2)
+        raise RuntimeError("Upload did not complete in time")
+
+    # ── Human-like typing (clipboard + paste) ───────────────────────────────
+
+    def _type_human(self, driver, text, label="field"):
+        import pyautogui
+        self._set_clipboard(text)
+        time.sleep(0.2)
+        pyautogui.hotkey('ctrl', 'a')
+        time.sleep(0.2)
+        pyautogui.hotkey('ctrl', 'v')
+        time.sleep(0.5)
+        log.info(f"Pasted {label} ({len(text)} chars)")
+
+    def _focus_first_input(self, driver):
+        return driver.execute_script(_FINDER_JS + """
+            var el = findInput(document, 15);
+            if (!el) return false;
+            el.focus();
+            el.scrollIntoView({block: 'center'});
+            return true;
+        """)
+
+    def _set_clipboard(self, text):
+        try:
+            subprocess.run(['clip'], input=text, text=True, check=True)
+        except Exception:
             try:
-                driver.find_element(By.CSS_SELECTOR, selector)
-                return True
+                import pyperclip
+                pyperclip.copy(text)
             except Exception:
-                time.sleep(2)
-        return False
+                pass
+
+    def _press_tab(self, driver):
+        import pyautogui
+        pyautogui.press('tab')
+        time.sleep(0.3)
+
+    def _kb_press(self, key):
+        import pyautogui
+        pyautogui.press(key)
+        time.sleep(0.3)
+
+    # ── Publish ─────────────────────────────────────────────────────────────
+
+    def _publish(self, driver):
+        import pyautogui
+
+        clicked = driver.execute_script(_FINDER_JS + """
+            for (var sel of ['#publish-button', 'ytcp-button#publish-button',
+                             'button#publish-button', '#save-button',
+                             'ytcp-button', 'button:not([disabled])']) {
+                var el = findEl(document, sel, 10);
+                if (!el) continue;
+                var text = (el.textContent || el.innerText || '').trim().toLowerCase();
+                if (text === 'publish' || text === 'save' ||
+                    text.includes('publish') || text.includes('save')) {
+                    el.click();
+                    return true;
+                }
+            }
+            return false;
+        """)
+
+        if not clicked:
+            log.info("Publish button not found via JS, trying Tab+Enter")
+            for _ in range(20):
+                pyautogui.press('tab')
+                time.sleep(0.2)
+            pyautogui.press('enter')
+        time.sleep(3)
+
+    # ── Tags ────────────────────────────────────────────────────────────────
 
     def _set_tags(self, driver, tags: list[str]):
-        from selenium.webdriver.common.by import By
         from selenium.webdriver.common.keys import Keys
-
+        for sel in ['#toggle-button', '[aria-label*="More"]', '[aria-label*="more"]']:
+            try:
+                driver.find_element("css selector", sel).click()
+                time.sleep(1)
+                break
+            except Exception:
+                continue
         try:
-            more_btn = driver.find_element("css selector", '#toggle-button, [aria-label*="More"]')
-            more_btn.click()
-            time.sleep(1)
-        except Exception:
-            pass
-
-        try:
-            tag_input = driver.find_element("css selector", '#tags-container input, input[placeholder*="tag"]')
+            tag_input = driver.find_element("css selector",
+                                            '#tags-container input, input[placeholder*="tag"]')
             for tag in tags[:30]:
                 tag_input.send_keys(tag)
                 tag_input.send_keys(Keys.COMMA)
                 time.sleep(0.3)
         except Exception:
-            log.debug("Could not find tag input field -- skipping tags")
+            log.debug("Skipping tags")
 
-    def _set_visibility_public(self, driver):
-        from selenium.webdriver.common.by import By
-
-        selectors = [
-            '#privacy-radio-UNLISTED',
-            '#visibility-radio-public',
-            'tp-yt-paper-radio-button[name="PUBLIC"]',
-            '#public-radio-button',
-        ]
-        for sel in selectors:
-            try:
-                el = driver.find_element(By.CSS_SELECTOR, sel)
-                el.click()
-                time.sleep(0.5)
-                return
-            except Exception:
-                continue
-
-        try:
-            radios = driver.find_elements(By.CSS_SELECTOR, 'tp-yt-paper-radio-button, input[type="radio"]')
-            for r in radios:
-                label = r.get_attribute("aria-label") or r.text or ""
-                if "public" in label.lower():
-                    r.click()
-                    time.sleep(0.5)
-                    return
-        except Exception:
-            pass
-
-        log.warning("Could not find public visibility option -- upload may be unlisted")
-
-    def _click_publish(self, driver) -> bool:
-        from selenium.webdriver.common.by import By
-
-        selectors = [
-            '#publish-button',
-            '#publish-button-ytd-button-renderer',
-            'button#publish-button',
-            '#save-button',
-            'ytcp-button#publish-button',
-        ]
-        for sel in selectors:
-            try:
-                btn = driver.find_element(By.CSS_SELECTOR, sel)
-                if btn.is_enabled():
-                    btn.click()
-                    time.sleep(3)
-                    return True
-            except Exception:
-                continue
-
-        try:
-            buttons = driver.find_elements(By.CSS_SELECTOR, 'button')
-            for btn in buttons:
-                text = (btn.text or "").strip().lower()
-                if text in ("publish", "save", "upload"):
-                    btn.click()
-                    time.sleep(3)
-                    return True
-        except Exception:
-            pass
-
-        return False
+    # ── Video ID extraction ─────────────────────────────────────────────────
 
     def _extract_video_id(self, driver) -> str | None:
-        import re
         url = driver.current_url
         m = re.search(r"(?:video|shorts)/([\w-]{11})", url)
         if m:
             return m.group(1)
-
-        try:
-            link = driver.find_element("css selector", 'a[href*="/shorts/"], a[href*="youtu.be"]')
-            href = link.get_attribute("href") or ""
-            m = re.search(r"(?:video|shorts)/([\w-]{11})", href)
-            if m:
-                return m.group(1)
-        except Exception:
-            pass
-
-        try:
-            page = driver.page_source
-            m = re.search(r'"videoId"\s*:\s*"([\w-]{11})"', page)
-            if m:
-                return m.group(1)
-        except Exception:
-            pass
-
+        m = re.search(r'"videoId"\s*:\s*"([\w-]{11})"', driver.page_source)
+        if m:
+            return m.group(1)
         return None
+
+    # ── Debug ───────────────────────────────────────────────────────────────
+
+    def _save_debug(self, driver):
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                driver.save_screenshot(f.name)
+                log.info(f"Screenshot: {f.name}")
+                print(f"  Debug screenshot: {f.name}")
+        except Exception:
+            pass
+        try:
+            with open("page_debug.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            log.info("Page source saved to page_debug.html")
+            print("  Debug HTML: page_debug.html")
+        except Exception:
+            pass
