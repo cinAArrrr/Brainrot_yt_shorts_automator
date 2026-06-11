@@ -5,6 +5,11 @@ config.json
 config.json.enc
 *.log
 
+# Debug artifacts
+page_debug.html
+upload_fail_*.png
+upload_step_*.png
+
 # Python cache
 __pycache__/
 *.pyc
