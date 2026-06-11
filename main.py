@@ -61,6 +61,20 @@ def cmd_check(args):
     _build_uploader()
 
 
+def cmd_login(args):
+    print(BANNER)
+    print("Opening browser for YouTube login...\n")
+    from cookie_uploader import CookieUploader
+    from cookie_auth import CookieAuth
+    auth = CookieAuth("cookies.txt")
+    uploader = CookieUploader(auth)
+    saved = uploader.login_and_save_cookies()
+    if saved:
+        print("\nCookies saved! You can now run 'python main.py start' fully headless.")
+    else:
+        print("\nLogin failed.")
+
+
 def cmd_generate(args):
     print(BANNER)
     gen    = _build_generator()
@@ -147,6 +161,8 @@ def main():
 
     sub.add_parser("check", help="Verify cookies.txt")
 
+    sub.add_parser("login", help="Log into YouTube and save cookies for headless use")
+
     p = sub.add_parser("generate", help="Generate a video without uploading")
     p.add_argument("--topic", "-t")
     p.add_argument("--output", "-o")
@@ -169,6 +185,7 @@ def main():
 
     args = parser.parse_args()
     {"check":    cmd_check,
+     "login":    cmd_login,
      "generate": cmd_generate,
      "upload":   cmd_upload,
      "start":    cmd_start,
