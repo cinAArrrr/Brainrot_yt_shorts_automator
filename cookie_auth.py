@@ -69,17 +69,19 @@ class CookieAuth:
                 driver.get("https://www.youtube.com")
                 time.sleep(2)
 
+                driver.get("https://www.youtube.com")
+                time.sleep(2)
                 for cookie in self._cookies:
-                    sel_cookie = {
-                        "name": cookie["name"],
-                        "value": cookie["value"],
-                        "domain": cookie["domain"],
-                        "path": cookie.get("path", "/"),
-                    }
-                    if cookie.get("secure"):
-                        sel_cookie["secure"] = True
                     try:
-                        driver.add_cookie(sel_cookie)
+                        driver.execute_cdp_cmd("Network.setCookie", {
+                            "name": cookie["name"],
+                            "value": cookie["value"],
+                            "domain": cookie["domain"],
+                            "path": cookie.get("path", "/"),
+                            "secure": bool(cookie.get("secure")),
+                            "httpOnly": False,
+                            "sameSite": "Lax",
+                        })
                     except Exception:
                         pass
 

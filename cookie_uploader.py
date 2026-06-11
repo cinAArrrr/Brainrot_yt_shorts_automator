@@ -66,7 +66,15 @@ class CookieUploader:
         time.sleep(2)
         for cookie in self.auth.get_selenium_cookies():
             try:
-                driver.add_cookie(cookie)
+                driver.execute_cdp_cmd("Network.setCookie", {
+                    "name": cookie["name"],
+                    "value": cookie["value"],
+                    "domain": cookie["domain"],
+                    "path": cookie.get("path", "/"),
+                    "secure": bool(cookie.get("secure")),
+                    "httpOnly": False,
+                    "sameSite": "Lax",
+                })
             except Exception:
                 pass
         driver.get(YOUTUBE_URL)
@@ -89,12 +97,16 @@ class CookieUploader:
             time.sleep(5)
 
             if "accounts.google.com" in driver.current_url:
-                log.error("Session expired -- cookies are invalid")
-                print("  ERROR: Session expired. Re-export your cookies.")
-                return None
-
-            if "upload" not in driver.current_url.lower():
-                log.warning(f"Unexpected URL after cookie injection: {driver.current_url}")
+                driver.quit()
+                print("  Cookies expired. Opening browser for manual login...")
+                driver = self._make_driver(headless=False)
+                driver.get(STUDIO_UPLOAD_URL)
+                try:
+                    input("  Press Enter after logging into YouTube Studio...")
+                except EOFError:
+                    print("  No terminal input available. Run: python main.py upload <video> --title ...")
+                    print("  Or re-export fresh cookies to cookies.txt for headless mode.")
+                    return None
 
             print(f"  Selecting video file...")
             self._send_file_to_upload(driver, video_path)

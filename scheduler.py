@@ -21,11 +21,13 @@ log = logging.getLogger(__name__)
 class BrainrotScheduler:
     def __init__(self, uploader, anthropic_api_key: str,
                  kling_api_key: str = "",
+                 hf_api_key: str = "",
                  interval_minutes: int = 60,
                  topic: Optional[str] = None):
         self.uploader   = uploader
         self.api_key    = anthropic_api_key
         self.kling_key  = kling_api_key
+        self.hf_key     = hf_api_key
         self.interval   = interval_minutes
         self.topic      = topic
         self.post_count = 0
@@ -39,6 +41,7 @@ class BrainrotScheduler:
         gen = BrainrotGenerator(
             anthropic_api_key=self.api_key,
             kling_api_key=self.kling_key,
+            hf_api_key=self.hf_key,
         )
 
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:

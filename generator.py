@@ -39,6 +39,12 @@ HF_VIDEO_MODELS = [
 HF_INFERENCE_URL = "https://api-inference.huggingface.co/models"
 HF_POLL_TIMEOUT  = 120
 
+# ── Kling AI config (paid fallback) ───────────────────────────────────────────
+KLING_API_BASE     = "https://api.klingai.com"
+KLING_TEXT2VIDEO   = f"{KLING_API_BASE}/v1/videos/text2video"
+KLING_POLL_TIMEOUT = 600
+KLING_POLL_INTERVAL = 10
+
 # ── Font discovery (Windows-first) ─────────────────────────────────────────────
 IMPACT_FONT_CANDIDATES = [
     "C:/Windows/Fonts/impact.ttf",
