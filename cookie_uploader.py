@@ -154,12 +154,15 @@ class CookieUploader:
                 time.sleep(4)
 
             self._click_first(driver, [
-                '#create-icon', '[aria-label="Create"]',
-                '[aria-label="CREATE"]', 'ytcp-button#create-button',
+                'ytcp-button#create-icon', '[aria-label="Create"]',
+                '[aria-label="CREATE"]', 'ytcp-icon-button#create-icon',
+                '#create-icon', 'ytcp-button#create-button',
             ], "CREATE")
             time.sleep(2)
 
             self._click_first(driver, [
+                'tp-yt-paper-item#text-item-0',
+                '#text-item-0',
                 '[aria-label="Upload videos"]',
                 'ytcp-ve[aria-label="Upload videos"]',
                 '.ytcp-menu-item',
@@ -243,15 +246,16 @@ class CookieUploader:
     # ── UI interaction: click ───────────────────────────────────────────────
 
     def _click_first(self, driver, selectors, label="button"):
+        from selenium.webdriver.common.by import By
         for sel in selectors:
             try:
-                el = driver.find_element("css selector", sel)
+                el = driver.find_element(By.CSS_SELECTOR, sel)
                 driver.execute_script("arguments[0].click()", el)
                 log.info(f"Clicked {label}: {sel}")
                 return
             except Exception:
                 continue
-        driver.execute_script(selectors[0] + "?.click()")
+        raise RuntimeError(f"Could not find or click '{label}' button (tried {len(selectors)} selectors)")
 
     # ── File selection ──────────────────────────────────────────────────────
 
