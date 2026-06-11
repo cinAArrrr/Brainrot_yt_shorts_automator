@@ -1,0 +1,40 @@
+# Secrets
+cookies.txt
+config.json
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temp files
+*.tmp
+*.tmp.*
+*.m4a
+temp/
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated videos (keep only source code)
+*.mp4
+*.mp3
+*.wav
+
+# Git
+*.orig
