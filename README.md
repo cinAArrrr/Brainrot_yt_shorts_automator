@@ -1,6 +1,6 @@
 # Court Chronicles Bot
 
-AI-powered YouTube Shorts auto-poster that generates dramatic courtroom videos daily.
+AI-powered YouTube Shorts auto-poster that generates and uploads dramatic courtroom videos on autopilot.
 
 ## How it works
 
@@ -9,21 +9,22 @@ AI-powered YouTube Shorts auto-poster that generates dramatic courtroom videos d
 3. **Procedural rendering** draws a courtroom scene with animated character avatars
 4. **Selenium** uploads the finished video to YouTube Shorts
 
-No paid APIs required. All AI services used have generous free tiers.
+No paid APIs required. Fully automated after one-time login.
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-```
-
-Set your API keys:
-
-```bash
 python main.py config --groq-key gsk_YOUR_GROQ_KEY
 ```
 
-Export your YouTube cookies (Netscape format) to `cookies.txt`, then:
+Log into YouTube once (saves cookies for future headless runs):
+
+```bash
+python main.py login
+```
+
+Start the auto-poster:
 
 ```bash
 python main.py start
@@ -33,28 +34,29 @@ python main.py start
 
 | Command | Description |
 |---------|-------------|
+| `python main.py login` | Log into YouTube once — saves cookies for headless use |
+| `python main.py start` | Start the auto-poster loop (fully headless) |
 | `python main.py config --groq-key KEY` | Set your Groq API key |
-| `python main.py config --hf-key KEY` | Set Hugging Face key (optional, for AI video background) |
 | `python main.py config` | View current config |
-| `python main.py start` | Start the auto-poster loop |
 | `python main.py generate --topic "my topic"` | Generate a video without uploading |
 | `python main.py upload video.mp4 --title "My Title"` | Upload an existing video |
-| `python main.py check` | Verify YouTube cookies work |
+| `python main.py check` | Verify saved YouTube cookies |
 
 ## Getting API keys
 
-- **Groq** (required): https://console.groq.com — free tier: 30 req/min
-- **Hugging Face** (optional): https://huggingface.co/settings/tokens — free tier: ~1000 req/day
-- **Kling** (optional, paid): https://klingai.com — for AI-generated video backgrounds
+- **Groq** (required): https://console.groq.com — free tier: 30 req/min, 14k req/day
+- **Hugging Face** (optional): https://huggingface.co/settings/tokens — free AI video backgrounds
+- **Kling** (optional): https://klingai.com — paid AI video backgrounds
 
-## Exporting YouTube cookies
+## YouTube login (one-time)
 
-1. Install a browser extension like "Get cookies.txt" (chrome/firefox)
-2. Log into YouTube in your browser
-3. Export cookies as Netscape format
-4. Save as `cookies.txt` in the project folder
+Instead of manually exporting cookies, just run:
 
-The bot uses these cookies to authenticate with YouTube Studio for uploads.
+```bash
+python main.py login
+```
+
+A browser opens, you log into YouTube once, and cookies are saved automatically. Every subsequent run is fully headless. Re-run when cookies expire (months later).
 
 ## License
 
