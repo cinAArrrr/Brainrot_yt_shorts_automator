@@ -363,24 +363,36 @@ class CookieUploader:
     def _publish(self, driver):
         import pyautogui
 
-        clicked = driver.execute_script(_FINDER_JS + """
-            for (var sel of ['#publish-button', 'ytcp-button#publish-button',
-                             'button#publish-button', '#save-button',
-                             'ytcp-button', 'button:not([disabled])']) {
-                var el = findEl(document, sel, 10);
-                if (!el) continue;
-                var text = (el.textContent || el.innerText || '').trim().toLowerCase();
-                if (text === 'publish' || text === 'save' ||
-                    text.includes('publish') || text.includes('save')) {
-                    el.click();
-                    return true;
-                }
-            }
-            return false;
-        """)
+        # Try multiple selectors for the publish button
+        publish_selectors = [
+            '#publish-button',
+            'ytcp-button#publish-button',
+            'button#publish-button',
+            '#save-button',
+            'ytcp-button[aria-label="Publish"]',
+            'ytcp-button[aria-label="Veröffentlichen"]',
+            '[aria-label="Publish"]',
+            '[aria-label="Veröffentlichen"]',
+            'button[type="button"]',
+            'button:not([disabled]):not([class*="secondary"])',
+        ]
+
+        clicked = False
+        for sel in publish_selectors:
+            try:
+                el = driver.find_element("css selector", sel)
+                # Check if button text contains publish/save
+                text = (el.text or "").strip().lower()
+                if 'publish' in text or 'save' in text:
+                    el.click()
+                    log.info(f"Clicked publish button via selector: {sel}")
+                    clicked = True
+                    break
+            except Exception:
+                continue
 
         if not clicked:
-            log.info("Publish button not found via JS, trying Tab+Enter")
+            log.info("Publish button not found via selectors, trying Tab+Enter")
             for _ in range(20):
                 pyautogui.press('tab')
                 time.sleep(0.2)
